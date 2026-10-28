@@ -1,0 +1,245 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Knowledge Assistant</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #f3f5f9;
+            margin: 0;
+            padding: 24px;
+            color: #222;
+        }
+
+        .chat-container {
+            max-width: 700px;
+            margin: 30px auto;
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            margin-top: 0;
+            font-size: 25px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        #messages {
+            height: 380px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 14px;
+            margin: 20px 0;
+            background: #fafafa;
+        }
+
+        .message {
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .user {
+            background: #e3edff;
+            margin-left: 35px;
+        }
+
+        .assistant {
+            background: #e8f5e9;
+            margin-right: 20px;
+        }
+
+        .error {
+            background: #ffebee;
+            color: #b71c1c;
+        }
+
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+
+        input, textarea, button {
+            font: inherit;
+            width: 100%;
+            padding: 12px;
+            border-radius: 7px;
+            border: 1px solid #ccc;
+            margin-bottom: 12px;
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 75px;
+        }
+
+        button {
+            background: #2457d6;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        .source {
+            font-size: 13px;
+            color: #444;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+<body>
+    <main class="chat-container">
+        <h1>AI Knowledge Assistant</h1>
+        <p class="subtitle">
+            Ask a question about the organization's uploaded documents.
+        </p>
+
+       <div id="tokenSection">
+    <label for="assistantToken">Assistant Token</label>
+    <input
+        id="assistantToken"
+        type="password"
+        autocomplete="off"
+        placeholder="Enter your organization's assistant token"
+    >
+</div>
+
+        <div id="messages" aria-live="polite">
+            <div class="message assistant">
+                Welcome! Enter your assistant token and ask a question.
+            </div>
+        </div>
+
+        <form id="chatForm">
+            <label for="question">Your question</label>
+            <textarea
+                id="question"
+                placeholder="Type your question here..."
+                required
+            ></textarea>
+            <button id="sendButton" type="submit">Ask Assistant</button>
+        </form>
+    </main>
+
+    <script>
+        const form = document.getElementById("chatForm");
+        const messages = document.getElementById("messages");
+        const sendButton = document.getElementById("sendButton");
+        
+        const tokenFromUrl =
+            new URLSearchParams(window.location.search).get("token");
+
+        if (tokenFromUrl) {
+            document.getElementById("assistantToken").value = tokenFromUrl;
+            document.getElementById("tokenSection").style.display = "none";
+        }
+
+        function addMessage(text, className) {
+            const message = document.createElement("div");
+            message.className = "message " + className;
+            message.textContent = text;
+            messages.appendChild(message);
+            messages.scrollTop = messages.scrollHeight;
+            return message;
+        }
+
+        form.addEventListener("submit", async function (event) {
+            event.preventDefault();
+
+            const assistantToken =
+                document.getElementById("assistantToken").value.trim();
+            const question =
+                document.getElementById("question").value.trim();
+
+            if (!assistantToken || !question) {
+                addMessage("Please enter the assistant token and a question.", "error");
+                return;
+            }
+
+            addMessage("You: " + question, "user");
+            document.getElementById("question").value = "";
+            sendButton.disabled = true;
+            sendButton.textContent = "Getting answer...";
+
+            const loadingMessage = addMessage("Searching the documents...", "assistant");
+
+            try {
+                const response = await fetch("/api/assistant/ask", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        assistantToken: assistantToken,
+                        question: question
+                    })
+                });
+
+                const data = await response.json();
+                loadingMessage.remove();
+
+                if (!response.ok) {
+                    addMessage(
+                        data.message || "The request failed. Please try again.",
+                        "error"
+                    );
+                    return;
+                }
+
+                addMessage("Assistant: " + data.answer, "assistant");
+
+                if (data.sources && data.sources.length > 0) {
+                    const sourceText = data.sources.map(source =>
+                        (source.reference || source.fileName || "Document")
+                    ).filter((value, index, array) =>
+                        array.indexOf(value) === index
+                    );
+
+                    addMessage(
+                        "Sources:\n" + sourceText.map(source => "• " + source).join("\n"),
+                        "source"
+                    );
+                }
+
+                if (data.status === "INSUFFICIENT_EVIDENCE") {
+                    addMessage(
+                        "The uploaded documents did not contain enough evidence to answer this question.",
+                        "source"
+                    );
+                }
+            } catch (error) {
+                loadingMessage.remove();
+                addMessage(
+                    "Unable to connect to the assistant. Check that the Spring Boot application is running.",
+                    "error"
+                );
+            } finally {
+                sendButton.disabled = false;
+                sendButton.textContent = "Ask Assistant";
+            }
+        });
+    </script>
+</body>
+</html>

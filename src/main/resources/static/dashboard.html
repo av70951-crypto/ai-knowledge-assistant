@@ -1,0 +1,376 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organization Dashboard</title>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 24px;
+            font-family: Arial, sans-serif;
+            background: #f3f5f9;
+            color: #222;
+        }
+
+        main {
+            max-width: 900px;
+            margin: 20px auto;
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .08);
+        }
+
+        h1 { margin-top: 0; }
+
+        input, button {
+            font: inherit;
+            padding: 11px;
+            border-radius: 7px;
+        }
+
+        input[type="password"],
+        input[type="file"] {
+            width: 100%;
+            border: 1px solid #ccc;
+            margin: 8px 0 12px;
+        }
+
+        button {
+            border: 0;
+            cursor: pointer;
+            background: #2457d6;
+            color: white;
+            margin: 4px 0;
+        }
+
+        button:disabled { opacity: .6; }
+
+        .delete-button { background: #b42318; }
+
+        .section {
+            margin-top: 24px;
+            padding-top: 18px;
+            border-top: 1px solid #ddd;
+        }
+
+        .message {
+            margin-top: 12px;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .document {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 14px;
+            margin: 10px 0;
+        }
+
+        .document-info { overflow-wrap: anywhere; }
+        .muted { color: #666; font-size: 14px; }
+
+        @media (max-width: 600px) {
+            body { padding: 10px; }
+            main { padding: 16px; }
+            .document {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+<main>
+    <h1>Organization Dashboard</h1>
+    <p class="muted">Manage your organization's knowledge-base PDFs.</p>
+
+    <section>
+        <label for="jwtToken"><strong>Login token (JWT)</strong></label>
+        <input
+            id="jwtToken"
+            type="password"
+            autocomplete="off"
+            placeholder="Paste the JWT returned by your login API"
+        >
+
+        <button id="connectButton" type="button">Connect to Dashboard</button>
+        <button id="disconnectButton" type="button">Disconnect</button>
+
+        <div id="connectionMessage" class="message" role="status"></div>
+    </section>
+
+    <section class="section">
+        <h2>Upload PDF</h2>
+        <p class="muted">
+            Maximum 10 PDFs per organization, 20 pages per PDF, and 10 MB per PDF.
+        </p>
+
+        <form id="uploadForm">
+            <label for="pdfFile">Choose a PDF file</label>
+            <input
+                id="pdfFile"
+                type="file"
+                accept="application/pdf,.pdf"
+                required
+            >
+            <button id="uploadButton" type="submit">Upload PDF</button>
+        </form>
+
+        <div id="uploadMessage" class="message" role="status"></div>
+    </section>
+
+    <section class="section">
+        <h2>Your Documents</h2>
+        <button id="refreshButton" type="button">Refresh Documents</button>
+
+        <div id="documentList" aria-live="polite">
+            Connect to your dashboard to view documents.
+        </div>
+
+        <div id="documentMessage" class="message" role="status"></div>
+    </section>
+</main>
+
+<script>
+    let jwtToken = "";
+
+    const tokenInput = document.getElementById("jwtToken");
+    const connectButton = document.getElementById("connectButton");
+    const disconnectButton = document.getElementById("disconnectButton");
+    const connectionMessage = document.getElementById("connectionMessage");
+    const uploadForm = document.getElementById("uploadForm");
+    const uploadButton = document.getElementById("uploadButton");
+    const uploadMessage = document.getElementById("uploadMessage");
+    const refreshButton = document.getElementById("refreshButton");
+    const documentList = document.getElementById("documentList");
+    const documentMessage = document.getElementById("documentMessage");
+
+    function setMessage(element, message, isError = false) {
+        element.textContent = message;
+        element.style.color = isError ? "#b42318" : "#216e39";
+    }
+
+    async function apiRequest(url, options = {}) {
+        if (!jwtToken) {
+            throw new Error("Connect to the dashboard using your JWT first.");
+        }
+
+        const headers = new Headers(options.headers || {});
+        headers.set("Authorization", "Bearer " + jwtToken);
+
+        const response = await fetch(url, {
+            ...options,
+            headers
+        });
+
+        const responseText = await response.text();
+        let data = {};
+
+        try {
+            data = responseText ? JSON.parse(responseText) : {};
+        } catch {
+            data = { message: responseText };
+        }
+
+        if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+                throw new Error(
+                    "Access denied. Check your JWT and try logging in again."
+                );
+            }
+
+            throw new Error(
+                data.error || data.message ||
+                "Request failed with status " + response.status
+            );
+        }
+
+        return data;
+    }
+
+    async function loadDocuments() {
+        documentList.textContent = "Loading documents...";
+        setMessage(documentMessage, "");
+
+        try {
+            const documents = await apiRequest("/api/documents");
+
+            documentList.replaceChildren();
+
+            if (!Array.isArray(documents) || documents.length === 0) {
+                documentList.textContent = "No PDFs uploaded yet.";
+                return;
+            }
+
+            // Use "doc" here to avoid shadowing the browser's document object.
+            documents.forEach(doc => {
+                const card = document.createElement("div");
+                card.className = "document";
+
+                const info = document.createElement("div");
+                info.className = "document-info";
+
+                const name = document.createElement("strong");
+                name.textContent = doc.fileName || "Unnamed PDF";
+
+                const details = document.createElement("p");
+                details.className = "muted";
+                details.textContent =
+                    "Document ID: " + doc.documentId +
+                    " | Pages: " + doc.pageCount +
+                    (doc.uploadedAt ? " | Uploaded: " + doc.uploadedAt : "");
+
+                info.append(name, details);
+
+                const deleteButton = document.createElement("button");
+                deleteButton.className = "delete-button";
+                deleteButton.textContent = "Delete";
+
+                deleteButton.addEventListener("click", async () => {
+                    const confirmed = window.confirm(
+                        "Delete this PDF and its indexed content?"
+                    );
+
+                    if (!confirmed) return;
+
+                    deleteButton.disabled = true;
+
+                    try {
+                        await apiRequest(
+                            "/api/documents/" +
+                                encodeURIComponent(doc.documentId),
+                            { method: "DELETE" }
+                        );
+
+                        setMessage(
+                            documentMessage,
+                            "Document deleted successfully."
+                        );
+
+                        await loadDocuments();
+                    } catch (error) {
+                        setMessage(documentMessage, error.message, true);
+                        deleteButton.disabled = false;
+                    }
+                });
+
+                card.append(info, deleteButton);
+                documentList.appendChild(card);
+            });
+        } catch (error) {
+            documentList.textContent = "";
+            setMessage(documentMessage, error.message, true);
+        }
+    }
+
+    connectButton.addEventListener("click", async () => {
+        const suppliedToken = tokenInput.value.trim();
+
+        if (!suppliedToken) {
+            setMessage(connectionMessage, "Paste your JWT first.", true);
+            return;
+        }
+
+        jwtToken = suppliedToken;
+        connectButton.disabled = true;
+
+        try {
+            await loadDocuments();
+            setMessage(
+                connectionMessage,
+                "Connected. Your organization documents are loaded."
+            );
+        } catch (error) {
+            jwtToken = "";
+            setMessage(connectionMessage, error.message, true);
+        } finally {
+            connectButton.disabled = false;
+        }
+    });
+
+    disconnectButton.addEventListener("click", () => {
+        jwtToken = "";
+        tokenInput.value = "";
+        documentList.textContent =
+            "Disconnected. Connect again to view documents.";
+
+        setMessage(connectionMessage, "Disconnected.");
+        setMessage(documentMessage, "");
+        setMessage(uploadMessage, "");
+    });
+
+    refreshButton.addEventListener("click", loadDocuments);
+
+    uploadForm.addEventListener("submit", async event => {
+        event.preventDefault();
+        setMessage(uploadMessage, "");
+
+        const file = document.getElementById("pdfFile").files[0];
+
+        if (!jwtToken) {
+            setMessage(uploadMessage, "Connect to the dashboard first.", true);
+            return;
+        }
+
+        if (!file) {
+            setMessage(uploadMessage, "Choose a PDF file first.", true);
+            return;
+        }
+
+        if (
+            !file.name.toLowerCase().endsWith(".pdf") ||
+            (file.type && file.type !== "application/pdf")
+        ) {
+            setMessage(uploadMessage, "Please select a valid PDF file.", true);
+            return;
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+            setMessage(
+                uploadMessage,
+                "The PDF must not exceed 10 MB.",
+                true
+            );
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        uploadButton.disabled = true;
+        uploadButton.textContent = "Uploading...";
+
+        try {
+            const result = await apiRequest("/api/documents/upload", {
+                method: "POST",
+                body: formData
+            });
+
+            setMessage(
+                uploadMessage,
+                result.message || "PDF uploaded successfully."
+            );
+
+            uploadForm.reset();
+            await loadDocuments();
+        } catch (error) {
+            setMessage(uploadMessage, error.message, true);
+        } finally {
+            uploadButton.disabled = false;
+            uploadButton.textContent = "Upload PDF";
+        }
+    });
+</script>
+</body>
+</html>
